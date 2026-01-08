@@ -156,7 +156,7 @@ const roon = new RoonApi({
     log_level:           argv.log,
     publisher:           'Tymur Smyr',
     email:               'tymur@smyr.dev',
-    website:             'https://github.com/tim/roon-mpris',
+    website:             'https://github.com/godlyfast/roon-mpris',
 
     core_paired: function(core_) {
         core = core_;

@@ -15,7 +15,7 @@ Based on [brucejcooper/roon-mpris](https://github.com/brucejcooper/roon-mpris), 
 ## Installation
 
 ```bash
-npm install -g github:tim/roon-mpris
+npm install -g github:godlyfast/roon-mpris
 ```
 
 ## Usage
