@@ -34,40 +34,113 @@ const argv = yargs
         type: 'string',
         default: 'none'
     })
+    .option('pause-all', {
+        alias: 'P',
+        description: 'Pause all zones and exit',
+        type: 'boolean',
+        default: false
+    })
     .help()
     .argv;
 
 var core;
-var zone;
+const zonePlayerMap = new Map(); // zone_id -> { player, zone, sanitizedName, wsUrl }
 
-function zoneChanged(new_zone) {
-    zone = new_zone;
-    var url = core.moo.transport.ws._url.substring(5);
-    var now_playing = zone.now_playing;
+// Sanitize zone names for D-Bus (only alphanumeric, underscore, hyphen allowed)
+function sanitizeForDBus(displayName) {
+    let sanitized = displayName.replace(/[^A-Za-z0-9_-]/g, '_');
+    // D-Bus names cannot start with a digit
+    if (/^[0-9]/.test(sanitized)) {
+        sanitized = 'zone_' + sanitized;
+    }
+    return sanitized || 'unnamed_zone';
+}
 
-    console.log(zone);
+// Update MPRIS player state from Roon zone data
+function updatePlayerFromZone(context) {
+    const { player, zone, wsUrl } = context;
+    const now_playing = zone.now_playing;
 
     if (now_playing) {
-        mpris.metadata = {
+        player.metadata = {
             'mpris:length': now_playing.length ? now_playing.length * 1000 * 1000 : 0, // In microseconds
-            'mpris:artUrl': `http://${url}/image/${now_playing.image_key}`,
+            'mpris:artUrl': `http://${wsUrl}/image/${now_playing.image_key}`,
             'xesam:title': now_playing.three_line.line1,
             'xesam:album': now_playing.three_line.line3,
             'xesam:artist': now_playing.three_line.line2.split(/\s+\/\s+/),
-        }    
+        };
     }
-    mpris.playbackStatus = zone.state.charAt(0).toUpperCase() + zone.state.slice(1); 
-    mpris.canGoNext = zone.is_next_allowed;
-    mpris.canGoPrevious = zone.is_next_allowed;
-    // mpris.canPlay = zone.is_play_allowed; // the ubuntu dock widget disappears if this is set to false (while playing)
-    mpris.canPause = zone.is_pause_allowed;
-    mpris.canSeek = zone.is_seek_allowed;
+
+    player.playbackStatus = zone.state.charAt(0).toUpperCase() + zone.state.slice(1);
+    player.canGoNext = zone.is_next_allowed;
+    player.canGoPrevious = zone.is_previous_allowed;
+    // player.canPlay = zone.is_play_allowed; // Ubuntu dock widget disappears if false while playing
+    player.canPause = zone.is_pause_allowed;
+    player.canSeek = zone.is_seek_allowed;
 }
 
-function setSeek(seek) {
-    // The zone object is automatically updated as the events come in, so there's no need to update it.
-    // console.log(zone);
-    mpris.position = seek * 1000 * 1000;
+// Set up MPRIS event handlers for a specific zone
+function setupPlayerEvents(player, zoneId) {
+    // Position getter
+    player.getPosition = function() {
+        const context = zonePlayerMap.get(zoneId);
+        if (context && context.zone && context.zone.now_playing) {
+            return context.zone.now_playing.seek_position * 1000 * 1000;
+        }
+        return 0;
+    };
+
+    // Transport controls - route to this specific zone
+    ['playpause', 'stop', 'next', 'previous'].forEach(function(eventName) {
+        player.on(eventName, () => {
+            const context = zonePlayerMap.get(zoneId);
+            if (context && core) {
+                console.log(`Zone "${context.zone.display_name}": ${eventName}`);
+                core.services.RoonApiTransport.control(context.zone, eventName);
+            }
+        });
+    });
+
+    // Log other events
+    ['raise', 'pause', 'play', 'seek', 'position', 'open', 'volume', 'loopStatus', 'shuffle'].forEach(function(eventName) {
+        player.on(eventName, function() {
+            const context = zonePlayerMap.get(zoneId);
+            console.log(`Zone "${context?.zone?.display_name}": Event ${eventName}`, arguments);
+        });
+    });
+
+    player.on('quit', function() {
+        console.log('Quit requested for zone player');
+    });
+}
+
+// Create MPRIS player for a zone
+function createPlayerContext(zone, wsUrl) {
+    const sanitizedName = `roon_${sanitizeForDBus(zone.display_name)}`;
+
+    const player = Player({
+        name: sanitizedName,
+        identity: `Roon - ${zone.display_name}`,
+        supportedUriSchemes: ['file'],
+        supportedMimeTypes: ['audio/mpeg', 'application/ogg'],
+        supportedInterfaces: ['player']
+    });
+
+    setupPlayerEvents(player, zone.zone_id);
+
+    return {
+        player: player,
+        zone: zone,
+        sanitizedName: sanitizedName,
+        wsUrl: wsUrl
+    };
+}
+
+// Destroy MPRIS player (disconnect from D-Bus)
+function destroyPlayerContext(context) {
+    if (context.player && context.player._bus) {
+        context.player._bus.disconnect();
+    }
 }
 
 
@@ -77,105 +150,137 @@ process.chdir( working_directory )
 
 
 const roon = new RoonApi({
-    extension_id:        'com.8bitcloud.roon-mpris',
-    display_name:        "MPRIS adapter",
-    display_version:     "1.0.0",
+    extension_id:        'com.tymur.roon-mpris-multizone',
+    display_name:        "Roon MPRIS Multi-Zone Bridge",
+    display_version:     "2.0.0",
     log_level:           argv.log,
-    publisher:           'Bruce Cooper',
-    email:               'bruce@brucecooper.net',
-    website:             'https://github.com/brucejcooper/roon-mpris',
+    publisher:           'Tymur Smyr',
+    email:               'tymur@smyr.dev',
+    website:             'https://github.com/tim/roon-mpris',
+
     core_paired: function(core_) {
-      core = core_;
+        core = core_;
+        const transport = core.services.RoonApiTransport;
 
-
-      let transport = core.services.RoonApiTransport;
-      transport.subscribe_zones(function(cmd, data) {
-
-        // When we connect, we receive a zones event.  When a zone chages, we receive a zones_changed.
-        // They are the same type, and we treat them the same.
-        var zones = data.zones_changed || data.zones;
-        if (zones) {
-            for (var candidate of zones) {
-                // We only want to respond to our configured zone.
-                if (mysettings.zone && candidate.display_name === mysettings.zone.name) {
-                    zoneChanged(candidate);
+        // Handle --pause-all mode: pause everything and exit
+        if (argv['pause-all']) {
+            console.log('Pausing all zones...');
+            transport.pause_all((err) => {
+                if (err) {
+                    console.error('Error pausing zones:', err);
+                    process.exit(1);
                 }
-            }
-        } else if (data.zones_seek_changed) {
-            for (var change of data.zones_seek_changed) {
-                if (zone && change.zone_id === zone.zone_id) {
-                    setSeek(change);
-                }
-            }
-        } else {
-            console.log(core.core_id,
-                core.display_name,
-                core.display_version,
-                "-",
-                cmd,
-                JSON.stringify(data, null, '  ')
-              );      
+                console.log('All zones paused');
+                process.exit(0);
+            });
+            return;
         }
-  
-      });
+
+        // Normal mode: subscribe to all zones and create MPRIS players
+        transport.subscribe_zones(function(cmd, data) {
+            const wsUrl = core.moo.transport.ws._url.substring(5);
+
+            // Handle initial zone list and newly added zones
+            const zonesToAdd = data.zones || data.zones_added || [];
+            for (const zone of zonesToAdd) {
+                if (!zonePlayerMap.has(zone.zone_id)) {
+                    console.log(`Creating MPRIS player for zone: ${zone.display_name}`);
+                    const context = createPlayerContext(zone, wsUrl);
+                    zonePlayerMap.set(zone.zone_id, context);
+                    updatePlayerFromZone(context);
+                }
+            }
+
+            // Handle zone state changes
+            if (data.zones_changed) {
+                for (const zone of data.zones_changed) {
+                    const context = zonePlayerMap.get(zone.zone_id);
+                    if (context) {
+                        context.zone = zone;
+                        updatePlayerFromZone(context);
+                    }
+                }
+            }
+
+            // Handle zone removals
+            if (data.zones_removed) {
+                for (const zoneId of data.zones_removed) {
+                    const context = zonePlayerMap.get(zoneId);
+                    if (context) {
+                        console.log(`Removing MPRIS player for zone: ${context.zone.display_name}`);
+                        destroyPlayerContext(context);
+                        zonePlayerMap.delete(zoneId);
+                    }
+                }
+            }
+
+            // Handle seek position updates
+            if (data.zones_seek_changed) {
+                for (const change of data.zones_seek_changed) {
+                    const context = zonePlayerMap.get(change.zone_id);
+                    if (context) {
+                        context.player.position = change.seek_position * 1000 * 1000;
+                    }
+                }
+            }
+        });
     },
+
     core_unpaired: function(core_) {
-      core = core_;
-      console.log(core.core_id,
-        core.display_name,
-        core.display_version,
-        "-",
-        "LOST"
-      );
-      core = undefined;
+        console.log(core_.core_id, core_.display_name, core_.display_version, "-", "LOST");
+
+        // Clean up all MPRIS players
+        for (const [zoneId, context] of zonePlayerMap) {
+            console.log(`Destroying player for zone: ${context.zone.display_name}`);
+            destroyPlayerContext(context);
+        }
+        zonePlayerMap.clear();
+
+        core = undefined;
     },
 });
 
 
-var mysettings = roon.load_config("settings") || {
-    zone: null,
-};
+var mysettings = roon.load_config("settings") || {};
 
 
 function makelayout(settings) {
-    var l = {
-        values:    settings,
-        layout:    [],
+    return {
+        values: settings,
+        layout: [
+            {
+                type: "label",
+                title: "All Roon zones are automatically exposed as MPRIS players."
+            }
+        ],
         has_error: false
     };
-  
-    l.layout.push({
-        type:    "zone",
-        title:   "Zone",
-        setting: "zone",
-    });  
-    return l;
 }
-  
+
 
 const svc_settings = new RoonApiSettings(roon, {
     get_settings: function(cb) {
-      cb(makelayout(mysettings));
+        cb(makelayout(mysettings));
     },
     save_settings: function(req, isdryrun, settings) {
-      let l = makelayout(settings.values);
-      req.send_complete(l.has_error ? "NotValid" : "Success", { settings: l });
-  
-      if (!isdryrun && !l.has_error) {
-        mysettings = l.values;
-        svc_settings.update_settings(l);
-        roon.save_config("settings", mysettings);
-      }
+        let l = makelayout(settings.values);
+        req.send_complete(l.has_error ? "NotValid" : "Success", { settings: l });
+
+        if (!isdryrun && !l.has_error) {
+            mysettings = l.values;
+            svc_settings.update_settings(l);
+            roon.save_config("settings", mysettings);
+        }
     }
 });
-  
+
 roon.init_services({
     required_services: [ RoonApiTransport ],
-    provided_services:   [ svc_settings ],
+    provided_services: [ svc_settings ],
 });
-  
 
-// My Work laptop blocks UDP by default, so we use the direct connect method
+
+// Connect to Roon
 if (argv.host) {
     console.log(`Connecting to Core at ws://${argv.host}:${argv.port}`)
     roon.ws_connect({ host: argv.host, port: argv.port});
@@ -183,38 +288,3 @@ if (argv.host) {
     console.log("Autodiscovery of Core")
     roon.start_discovery();
 }
-
-
-var mpris = Player({
-	name: 'roon',
-	identity: 'Roon',
-	supportedUriSchemes: ['file'],
-	supportedMimeTypes: ['audio/mpeg', 'application/ogg'],
-	supportedInterfaces: ['player']
-});
-
-mpris.getPosition = function() {
-  // return the position of your player
-  console.log("asking for position")
-  return zone ? zone.now_playing.seek_position * 1000 * 1000 : 0;
-}
-
-// Events
-var events = ['raise', 'quit', 'pause', 'play', 'seek', 'position', 'open', 'volume', 'loopStatus', 'shuffle'];
-events.forEach(function (eventName) {
-	mpris.on(eventName, function () {
-		console.log('Event:', eventName, arguments);
-	});
-});
-
-['playpause', 'stop', 'next', 'previous'].forEach(function (eventName) {
-    mpris.on(eventName,  () => {
-        console.log("Executing event", eventName);
-        core.services.RoonApiTransport.control(mysettings.zone, eventName)
-    });
-});
-
-
-mpris.on('quit', function () {
-	process.exit();
-});

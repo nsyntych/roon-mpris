@@ -1,40 +1,90 @@
-Want to control [Roon](https://roonlabs.com/) from your keyboard on linux?  You can run [Roon on Wine](https://github.com/RoPieee/roon-on-wine) which allows you to select albums to play or whatever, but this does not hook up to the standard media controller buttons (PLAY, PAUSE, NEXT, PREV) used on Ubuntu, [MPRIS](https://www.freedesktop.org/wiki/Specifications/mpris-spec/).  
+# Roon MPRIS Multi-Zone Bridge
 
-This little script aims to provide a way to have MPRIS (i.e. your linux box) control Roon's basic functions, like Play, Pause, Next and Previous. That's all it does.
+Control [Roon](https://roonlabs.com/) from your Linux desktop using standard media keys. This extension exposes **all Roon zones** as individual MPRIS players on D-Bus, allowing you to control each zone independently.
 
-# Installation
+Based on [brucejcooper/roon-mpris](https://github.com/brucejcooper/roon-mpris), extended with multi-zone support.
 
-1. Install this software
-    ```
-    npm install -g github:brucejcooper/roon-mpris
-    ```
-1. run the script from any directory
-    ```
-    roon-mpris
-    ```
-    Note that this will create a configuration file in `${HOME}/.config/roon-mpris`.
-1. In your existing Roon application (phone or desktop) Go to `Roon` -> `Settings` -> `Extensions`.  You should see the "MPRIS adapter" under my name. Enable the Extension
-    ![Enable](enabling.png)
-1. The button will change name to "Settings".  Click on it, and select the zone you wish to control from your computer.
-1. Use your keyboard to control playback.  Supported keys are PLAY/PAUSE, STOP (which appears to just pause), NEXT and PREV
+## Features
+
+- **Multi-zone support**: Each Roon zone gets its own MPRIS player
+- **Dynamic zones**: Players are created/destroyed as zones appear/disappear
+- **Pause all**: `--pause-all` flag to pause all zones at once
+- **Standard media keys**: Play, Pause, Stop, Next, Previous
+- **playerctl compatible**: Control zones via `playerctl -p roon_<ZoneName>`
+
+## Installation
+
+```bash
+npm install -g github:tim/roon-mpris
+```
+
+## Usage
+
+```bash
+# Start the bridge (autodiscovery)
+roon-mpris
+
+# Connect directly to Roon Core (if autodiscovery fails)
+roon-mpris --host 192.168.1.100
+
+# Pause all zones and exit
+roon-mpris --pause-all
+
+# Debug mode
+roon-mpris --log all
+```
+
+### First Run
+
+1. Start `roon-mpris`
+2. In Roon app: **Settings → Extensions**
+3. Find **"Roon MPRIS Multi-Zone Bridge"** by Tymur Smyr
+4. Click **Enable**
+
+### Controlling Zones
+
+Each zone appears as a separate MPRIS player:
+
+```bash
+# List all Roon players
+playerctl -l | grep roon
+
+# Control specific zone
+playerctl -p roon_Living_Room play
+playerctl -p roon_Office next
+playerctl -p roon_Bedroom pause
+
+# Or use media keys - they control the most recently active player
+```
+
+## Options
+
+```
+-h, --host       Connect directly to Roon Core IP
+-p, --port       Port for direct connection (default: 9100)
+-P, --pause-all  Pause all zones and exit
+-l, --log        Logging level (none, all)
+-c, --config     Config directory (default: ~/.config/roon-mpris)
+```
 
 ## Troubleshooting
-the Roon API uses UDP multicast packets to discover Roon cores on the same subnetwork.  Some laptops (like my work one) block these packets, requiring you to connect directly to the host running the core.  Run ```roon-mpris --help``` to see the options that allow you to do this.
 
-You can also specify a log level (try `all`) that the API uses to report what is going on.  That might help
+**Autodiscovery not working?**
+- Roon uses UDP multicast which may be blocked on some networks
+- Use `--host <IP>` to connect directly to your Roon Core
+- Find Core IP in Roon app: Settings → About
 
-I had a couple of situations where I thought it was broken, but it turned out I just hadn't enabled and configured my plugin in roon.  Make sure you do that.
+**Extension not appearing in Roon?**
+- Ensure the bridge is running and connected
+- Check terminal output for "Creating MPRIS player for zone:"
+- Try restarting both the bridge and Roon
 
-# Credits
-I based this work off the following packages
+## Credits
 
-* [Roon's API](https://github.com/RoonLabs/node-roon-api)
-* [mpris-service](https://github.com/dbusjs/mpris-service)
-* [roon-extension-linuxkeyboardremote](https://github.com/naepflin/roon-extension-linuxkeyboardremote) - I used this as a starting point, then added the MPRIS support
+- Original [roon-mpris](https://github.com/brucejcooper/roon-mpris) by Bruce Cooper
+- [Roon API](https://github.com/RoonLabs/node-roon-api)
+- [mpris-service](https://github.com/dbusjs/mpris-service)
 
+## License
 
-# TODO
-
-1. Make this start on system login, possibly with a little icon thingy..
-1. Volume Support - Ubuntu uses the volume keys to control its own system volume.  I don't want to subvert that, but it would also be nice to have them control roon volume... not sure what to do here.
-1. Remote control support.  This might be more of something for [RoPieee XL](https://ropieee.org/xl/), to allow a BLE remote control to control stuff.
+Apache-2.0
