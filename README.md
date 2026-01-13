@@ -8,6 +8,7 @@ Based on [brucejcooper/roon-mpris](https://github.com/brucejcooper/roon-mpris), 
 
 - **Multi-zone support**: Each Roon zone gets its own MPRIS player
 - **Dynamic zones**: Players are created/destroyed as zones appear/disappear
+- **Seeking**: Jump to any position in a track via playerctl or media controls
 - **Pause all**: `--pause-all` flag to pause all zones at once
 - **Standard media keys**: Play, Pause, Stop, Next, Previous
 - **playerctl compatible**: Control zones via `playerctl -p roon_<ZoneName>`
@@ -57,12 +58,31 @@ playerctl -p roon_Bedroom pause
 # Or use media keys - they control the most recently active player
 ```
 
+### Seeking
+
+Jump to any position in the currently playing track:
+
+```bash
+# Seek forward 30 seconds
+playerctl -p roon_Living_Room position 30+
+
+# Seek backward 10 seconds
+playerctl -p roon_Living_Room position 10-
+
+# Jump to specific position (2 minutes)
+playerctl -p roon_Living_Room position 120
+
+# Get current position
+playerctl -p roon_Living_Room position
+```
+
 ## Options
 
 ```
 -h, --host       Connect directly to Roon Core IP
 -p, --port       Port for direct connection (default: 9100)
 -P, --pause-all  Pause all zones and exit
+-d, --debug      Debug mode - dump full zone objects to discover API fields
 -l, --log        Logging level (none, all)
 -c, --config     Config directory (default: ~/.config/roon-mpris)
 ```
