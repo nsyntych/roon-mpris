@@ -84,14 +84,36 @@ function debugLogZone(label, zone) {
     console.log('=== END DEBUG ===\n');
 }
 
+// Generate a unique track identifier from metadata
+// D-Bus object paths must be alphanumeric + underscores, starting with /
+function generateTrackId(player, zoneId, nowPlaying) {
+    // Combine title, artist, album to create unique identifier per track
+    const title = nowPlaying.three_line?.line1 || '';
+    const artist = nowPlaying.three_line?.line2 || '';
+    const album = nowPlaying.three_line?.line3 || '';
+
+    // Create a simple hash from the metadata
+    const combined = `${title}|${artist}|${album}`;
+    let hash = 0;
+    for (let i = 0; i < combined.length; i++) {
+        const char = combined.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32-bit integer
+    }
+    // Make hash positive and convert to hex
+    const hashStr = (hash >>> 0).toString(16);
+
+    return player.objectPath(`track/${zoneId}_${hashStr}`);
+}
+
 // Update MPRIS player state from Roon zone data
 function updatePlayerFromZone(context) {
     const { player, zone, wsUrl } = context;
     const now_playing = zone.now_playing;
 
     if (now_playing) {
-        // Generate trackid for absolute seek support
-        const trackId = player.objectPath(`track/${zone.zone_id}`);
+        // Generate trackid unique to this track (not just zone)
+        const trackId = generateTrackId(player, zone.zone_id, now_playing);
         if (argv.debug) {
             console.log(`DEBUG trackid for ${zone.display_name}: ${trackId}`);
         }
