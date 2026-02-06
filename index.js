@@ -3,7 +3,7 @@
 
 const RoonApi = require("node-roon-api");
 const RoonApiTransport = require("node-roon-api-transport");
-const RoonApiSettings  = require("node-roon-api-settings");
+const RoonApiSettings = require("node-roon-api-settings");
 const Player = require('mpris-service');
 const yargs = require('yargs');
 const os = require('os');
@@ -164,14 +164,14 @@ function updatePlayerFromZone(context) {
     player.canGoNext = zone.is_next_allowed;
     player.canGoPrevious = zone.is_previous_allowed;
     // player.canPlay = zone.is_play_allowed; // Ubuntu dock widget disappears if false while playing
-    player.canPause = zone.is_pause_allowed;
+    player.canPause = true; //zone.is_pause_allowed;
     player.canSeek = zone.is_seek_allowed;
 }
 
 // Set up MPRIS event handlers for a specific zone
 function setupPlayerEvents(player, zoneId) {
     // Position getter
-    player.getPosition = function() {
+    player.getPosition = function () {
         const context = zonePlayerMap.get(zoneId);
         if (context && context.zone && context.zone.now_playing) {
             return context.zone.now_playing.seek_position * 1000 * 1000;
@@ -180,7 +180,7 @@ function setupPlayerEvents(player, zoneId) {
     };
 
     // Transport controls - route to this specific zone
-    ['playpause', 'stop', 'next', 'previous'].forEach(function(eventName) {
+    ['playpause', 'stop', 'next', 'previous', 'pause', 'play'].forEach(function (eventName) {
         player.on(eventName, () => {
             const context = zonePlayerMap.get(zoneId);
             if (context && core) {
@@ -247,14 +247,14 @@ function setupPlayerEvents(player, zoneId) {
     });
 
     // Log remaining unimplemented events
-    ['raise', 'pause', 'play', 'open', 'volume', 'loopStatus', 'shuffle'].forEach(function(eventName) {
-        player.on(eventName, function() {
+    ['raise', 'open', 'volume', 'loopStatus', 'shuffle'].forEach(function (eventName) {
+        player.on(eventName, function () {
             const context = zonePlayerMap.get(zoneId);
             console.log(`Zone "${context?.zone?.display_name}": Event ${eventName} (not implemented)`);
         });
     });
 
-    player.on('quit', function() {
+    player.on('quit', function () {
         console.log('Quit requested for zone player');
     });
 }
@@ -292,19 +292,19 @@ function destroyPlayerContext(context) {
 
 const working_directory = `${os.homedir()}/.config/roon-mpris`
 fs.mkdirSync(working_directory, { recursive: true });
-process.chdir( working_directory )
+process.chdir(working_directory)
 
 
 const roon = new RoonApi({
-    extension_id:        'com.tymur.roon-mpris-multizone',
-    display_name:        "Roon MPRIS Multi-Zone Bridge",
-    display_version:     "2.0.0",
-    log_level:           argv.log,
-    publisher:           'Tymur Smyr',
-    email:               'tymur@smyr.dev',
-    website:             'https://github.com/godlyfast/roon-mpris',
+    extension_id: 'com.tymur.roon-mpris-multizone',
+    display_name: "Roon MPRIS Multi-Zone Bridge",
+    display_version: "2.0.0",
+    log_level: argv.log,
+    publisher: 'Tymur Smyr',
+    email: 'tymur@smyr.dev',
+    website: 'https://github.com/godlyfast/roon-mpris',
 
-    core_paired: function(core_) {
+    core_paired: function (core_) {
         core = core_;
         const transport = core.services.RoonApiTransport;
 
@@ -323,7 +323,7 @@ const roon = new RoonApi({
         }
 
         // Normal mode: subscribe to all zones and create MPRIS players
-        transport.subscribe_zones(function(cmd, data) {
+        transport.subscribe_zones(function (cmd, data) {
             // Guard against callbacks after core disconnect
             if (!core || !core.moo || !core.moo.transport || !core.moo.transport.ws) {
                 return;
@@ -397,7 +397,7 @@ const roon = new RoonApi({
         });
     },
 
-    core_unpaired: function(core_) {
+    core_unpaired: function (core_) {
         console.log(core_.core_id, core_.display_name, core_.display_version, "-", "LOST");
 
         // Clean up all MPRIS players
@@ -430,10 +430,10 @@ function makelayout(settings) {
 
 
 const svc_settings = new RoonApiSettings(roon, {
-    get_settings: function(cb) {
+    get_settings: function (cb) {
         cb(makelayout(mysettings));
     },
-    save_settings: function(req, isdryrun, settings) {
+    save_settings: function (req, isdryrun, settings) {
         let l = makelayout(settings.values);
         req.send_complete(l.has_error ? "NotValid" : "Success", { settings: l });
 
@@ -446,15 +446,15 @@ const svc_settings = new RoonApiSettings(roon, {
 });
 
 roon.init_services({
-    required_services: [ RoonApiTransport ],
-    provided_services: [ svc_settings ],
+    required_services: [RoonApiTransport],
+    provided_services: [svc_settings],
 });
 
 
 // Connect to Roon
 if (argv.host) {
     console.log(`Connecting to Core at ws://${argv.host}:${argv.port}`)
-    roon.ws_connect({ host: argv.host, port: argv.port});
+    roon.ws_connect({ host: argv.host, port: argv.port });
 } else {
     console.log("Autodiscovery of Core")
     roon.start_discovery();
